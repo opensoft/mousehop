@@ -1013,8 +1013,7 @@ impl CaptureTask {
         // created InputCapture. The wall-press detection is
         // cross-platform — every backend benefits.
         capture.set_release_threshold(*self.release_threshold_px.borrow());
-        capture
-            .set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
+        capture.set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
 
         let r = self.do_capture_session(&mut capture).await;
 
@@ -2202,6 +2201,7 @@ mod command_ctrl_tests {
             lock_recovery_client: None,
             release_bind: Default::default(),
             release_threshold_px: Default::default(),
+            windows_crossing_zones: Vec::new(),
             request_rx,
             state: State::WaitingForAck,
             command_ctrl_mapper: Default::default(),
