@@ -233,7 +233,9 @@ impl Capture {
     }
 
     pub(crate) fn set_windows_crossing_zones(&self, zones: Vec<WindowsCrossingZone>) {
-        let _ = self.request_tx.send(CaptureRequest::SetWindowsCrossingZones(zones));
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetWindowsCrossingZones(zones));
     }
 }
 
