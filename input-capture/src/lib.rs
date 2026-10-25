@@ -446,11 +446,11 @@ impl InputCapture {
 
     /// Install per-display crossing rules in the Windows backend. Other
     /// capture backends ignore the Windows-only configuration.
-    pub async fn set_windows_crossing_zones(
+    pub fn set_windows_crossing_zones(
         &mut self,
         zones: Vec<WindowsCrossingZone>,
     ) -> Result<(), CaptureError> {
-        self.capture.set_windows_crossing_zones(zones).await
+        self.capture.set_windows_crossing_zones(zones)
     }
 
     /// release mouse
@@ -1279,7 +1279,7 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
     /// Configure Windows-only monitor/edge crossing zones. Non-Windows
     /// implementations have no such zones and keep their original behavior.
-    async fn set_windows_crossing_zones(
+    fn set_windows_crossing_zones(
         &mut self,
         _zones: Vec<WindowsCrossingZone>,
     ) -> Result<(), CaptureError> {
