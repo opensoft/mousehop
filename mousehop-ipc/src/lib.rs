@@ -415,6 +415,25 @@ impl Default for ClientConfig {
     }
 }
 
+/// Restricts outgoing capture to an allowed portion of a Windows display edge.
+/// A configured list replaces unrestricted global-edge activation. Empty means
+/// the historical behavior. Names use Win32 GDI identifiers such as DISPLAY2.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowsCrossingZone {
+    pub monitor: String,
+    pub edge: Position,
+    /// Peer to activate; can differ from the physical edge for irregular layouts.
+    pub target: Position,
+    #[serde(default)]
+    pub start_px: Option<u32>,
+    #[serde(default)]
+    pub end_px: Option<u32>,
+    #[serde(default)]
+    pub start_percent: Option<f64>,
+    #[serde(default)]
+    pub end_percent: Option<f64>,
+}
+
 pub type ClientHandle = u64;
 
 /// Per-incoming-peer settings, keyed on the peer's TLS certificate
