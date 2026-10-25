@@ -31,12 +31,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WTS_SESSION_UNLOCK,
 };
 
-use mousehop_ipc::WindowsCrossingZone;
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, CrossingModifier, Event, KeyboardEvent,
     PointerEvent,
     scancode::{self, Linux},
 };
+use mousehop_ipc::WindowsCrossingZone;
 
 use super::{CaptureEvent, Position, display_util};
 
