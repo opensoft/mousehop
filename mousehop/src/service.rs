@@ -237,6 +237,7 @@ impl Service {
             conn,
             config.release_bind(),
             config.release_threshold_px(),
+            config.windows_crossing_zones(),
         );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
@@ -734,6 +735,8 @@ impl Service {
         self.capture.set_release_bind(release_bind);
         let release_threshold = self.config.release_threshold_px();
         self.capture.set_release_threshold(release_threshold);
+        self.capture
+            .set_windows_crossing_zones(self.config.windows_crossing_zones());
         self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
