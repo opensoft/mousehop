@@ -224,6 +224,29 @@ mod monitor_zone_tests {
     }
 
     #[test]
+    fn unknown_monitor_name_never_activates_capture() {
+        let displays = [RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 800,
+        }];
+        let names = vec!["DISPLAY1".into()];
+        let zones = vec![zone(
+            "DISPLAY9",
+            Position::Bottom,
+            Position::Bottom,
+            0.0,
+            100.0,
+        )];
+
+        assert_eq!(
+            entered_monitor_zone((500, 795), (500, 805), &displays, &names, &zones),
+            None,
+        );
+    }
+
+    #[test]
     fn invalid_percentage_rejected_and_diagonal_path_respects_edge() {
         let displays = [RECT { left: 0, top: 0, right: 1000, bottom: 800 }];
         let names = vec!["DISPLAY1".into()];
