@@ -31,6 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WTS_SESSION_UNLOCK,
 };
 
+use mousehop_ipc::WindowsCrossingZone;
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, CrossingModifier, Event, KeyboardEvent,
     PointerEvent,
@@ -72,6 +73,10 @@ impl EventThread {
         self.client_update(ClientUpdate::SetCrossingModifier(pos, modifier));
     }
 
+    pub(crate) fn set_windows_crossing_zones(&self, zones: Vec<WindowsCrossingZone>) {
+        self.client_update(ClientUpdate::SetWindowsCrossingZones(zones));
+    }
+
     fn exit(&self) {
         self.signal(RequestType::Exit);
     }
@@ -107,6 +112,7 @@ enum ClientUpdate {
     Create(Position),
     Destroy(Position),
     SetCrossingModifier(Position, Option<CrossingModifier>),
+    SetWindowsCrossingZones(Vec<WindowsCrossingZone>),
 }
 
 /// `SetTimer` id for the low-level-hook watchdog.
@@ -134,6 +140,10 @@ thread_local! {
     static PREV_POS: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
     /// displays and generation counter
     static DISPLAYS: RefCell<(Vec<RECT>, i32)> = const { RefCell::new((Vec::new(), 0)) };
+    /// Win32 device names in the same order as DISPLAYS' rectangles.
+    static DISPLAY_NAMES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// Explicit allowlist: an empty list means the legacy global-edge logic.
+    static CROSSING_ZONES: RefCell<Vec<WindowsCrossingZone>> = const { RefCell::new(Vec::new()) };
     /// True while the host's session is locked. Set/cleared from the
     /// `WM_WTSSESSION_CHANGE` window message. While true, barrier
     /// crossings are suppressed and any active capture is released —
@@ -413,7 +423,15 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     /* check if a client was activated */
     let entered = DISPLAYS.with_borrow_mut(|(displays, generation)| {
         update_display_regions(displays, generation);
-        display_util::entered_barrier(prev_pos, curr_pos, displays)
+        CROSSING_ZONES.with_borrow(|zones| {
+            if zones.is_empty() {
+                display_util::entered_barrier(prev_pos, curr_pos, displays)
+            } else {
+                DISPLAY_NAMES.with_borrow(|names| {
+                    display_util::entered_monitor_zone(prev_pos, curr_pos, displays, names, zones)
+                })
+            }
+        })
     });
 
     let Some(pos) = entered else {
@@ -660,6 +678,7 @@ fn update_display_regions(displays: &mut Vec<RECT>, generation: &mut i32) {
 
 fn enumerate_displays(display_rects: &mut Vec<RECT>) {
     display_rects.clear();
+    DISPLAY_NAMES.with_borrow_mut(Vec::clear);
     unsafe {
         let mut devices = vec![];
         for i in 0.. {
@@ -698,6 +717,11 @@ fn enumerate_displays(display_rects: &mut Vec<RECT>) {
                 top: y,
                 bottom: y + height as i32,
             });
+            // Keep the Windows GDI device identifier for stable matching
+            // even when the physical desktop has staggered display edges.
+            let end = device.iter().position(|&u| u == 0).unwrap_or(device.len());
+            let name = String::from_utf16_lossy(&device[..end]);
+            DISPLAY_NAMES.with_borrow_mut(|names| names.push(name));
         }
     }
 }
@@ -724,6 +748,9 @@ fn update_clients(request: ClientUpdate) {
                     modifiers.remove(&pos);
                 }
             });
+        }
+        ClientUpdate::SetWindowsCrossingZones(zones) => {
+            CROSSING_ZONES.with_borrow_mut(|current| *current = zones);
         }
     }
 }
