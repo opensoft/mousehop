@@ -18,7 +18,7 @@ use toml_edit::{self, DocumentMut};
 use mousehop_cli::CliArgs;
 use mousehop_ipc::{
     ClipboardSuppression, ConnectionMode, CrossingModifier, DEFAULT_PORT, IncomingPeerConfig,
-    Position,
+    Position, WindowsCrossingZone,
 };
 
 use input_event::scancode::{
@@ -82,6 +82,10 @@ struct ConfigToml {
     mdns_discovery: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
+    /// Windows-only source monitor/edge crossing rules. Missing or empty
+    /// preserves the existing unrestricted global-edge behavior.
+    #[serde(default)]
+    windows_crossing_zones: Option<Vec<WindowsCrossingZone>>,
     authorized_fingerprints: Option<HashMap<String, IncomingPeerConfig>>,
     /// Per-OS clipboard suppression lists. Each host machine reads
     /// and writes only its own OS's slot; the rest round-trip
@@ -603,6 +607,14 @@ impl Config {
             .flatten()
             .map(From::<TomlClient>::from)
             .collect()
+    }
+
+    /// Optional Windows-only source monitor/edge crossing allowlist.
+    pub fn windows_crossing_zones(&self) -> Vec<WindowsCrossingZone> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.windows_crossing_zones.clone())
+            .unwrap_or_default()
     }
 
     /// release bind for returning control to the host
