@@ -119,7 +119,10 @@ pub(crate) fn entered_monitor_zone(
     zones.iter().find_map(|zone| {
         let name = zone.monitor.rsplit('\\').next().unwrap_or(&zone.monitor);
         let index = names.iter().position(|n| {
-            n.rsplit('\\').next().unwrap_or(n).eq_ignore_ascii_case(name)
+            n.rsplit('\\')
+                .next()
+                .unwrap_or(n)
+                .eq_ignore_ascii_case(name)
         })?;
         let display = displays.get(index)?;
         if !is_within_dp_region(prev, display) {
@@ -131,34 +134,45 @@ pub(crate) fn entered_monitor_zone(
         // another part of the monitor.
         let (from, to, boundary, origin, length) = match zone.edge {
             Position::Left if curr.0 < display.left => (
-                prev.0, curr.0, display.left, display.top, display.bottom - display.top,
+                prev.0,
+                curr.0,
+                display.left,
+                display.top,
+                display.bottom - display.top,
             ),
             Position::Right if curr.0 >= display.right => (
-                prev.0, curr.0, display.right, display.top, display.bottom - display.top,
+                prev.0,
+                curr.0,
+                display.right,
+                display.top,
+                display.bottom - display.top,
             ),
             Position::Top if curr.1 < display.top => (
-                prev.1, curr.1, display.top, display.left, display.right - display.left,
+                prev.1,
+                curr.1,
+                display.top,
+                display.left,
+                display.right - display.left,
             ),
             Position::Bottom if curr.1 >= display.bottom => (
-                prev.1, curr.1, display.bottom, display.left, display.right - display.left,
+                prev.1,
+                curr.1,
+                display.bottom,
+                display.left,
+                display.right - display.left,
             ),
             _ => return None,
         };
         if to == from || length <= 0 {
             return None;
         }
-        let t = (f64::from(boundary) - f64::from(from))
-            / (f64::from(to) - f64::from(from));
+        let t = (f64::from(boundary) - f64::from(from)) / (f64::from(to) - f64::from(from));
         if !(0.0..=1.0).contains(&t) {
             return None;
         }
         let along = match zone.edge {
-            Position::Left | Position::Right => {
-                f64::from(prev.1) + t * f64::from(curr.1 - prev.1)
-            }
-            Position::Top | Position::Bottom => {
-                f64::from(prev.0) + t * f64::from(curr.0 - prev.0)
-            }
+            Position::Left | Position::Right => f64::from(prev.1) + t * f64::from(curr.1 - prev.1),
+            Position::Top | Position::Bottom => f64::from(prev.0) + t * f64::from(curr.0 - prev.0),
         } - f64::from(origin);
         if along < 0.0 || along >= f64::from(length) {
             return None;
@@ -169,7 +183,12 @@ pub(crate) fn entered_monitor_zone(
     })
 }
 
-fn range_offset(pixels: Option<u32>, percent: Option<f64>, default: f64, length: i32) -> Option<f64> {
+fn range_offset(
+    pixels: Option<u32>,
+    percent: Option<f64>,
+    default: f64,
+    length: i32,
+) -> Option<f64> {
     if let Some(px) = pixels {
         return Some(f64::from(px));
     }
@@ -181,7 +200,13 @@ fn range_offset(pixels: Option<u32>, percent: Option<f64>, default: f64, length:
 mod monitor_zone_tests {
     use super::*;
 
-    fn zone(monitor: &str, edge: Position, target: Position, start: f64, end: f64) -> WindowsCrossingZone {
+    fn zone(
+        monitor: &str,
+        edge: Position,
+        target: Position,
+        start: f64,
+        end: f64,
+    ) -> WindowsCrossingZone {
         WindowsCrossingZone {
             monitor: monitor.to_owned(),
             edge,
@@ -196,31 +221,75 @@ mod monitor_zone_tests {
     #[test]
     fn a_side_monitor_can_cross_only_from_its_lower_half() {
         let displays = [
-            RECT { left: 0, top: 0, right: 1000, bottom: 800 },
-            RECT { left: 1000, top: 0, right: 2000, bottom: 800 },
-            RECT { left: 2000, top: 0, right: 3000, bottom: 1600 },
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1000,
+                bottom: 800,
+            },
+            RECT {
+                left: 1000,
+                top: 0,
+                right: 2000,
+                bottom: 800,
+            },
+            RECT {
+                left: 2000,
+                top: 0,
+                right: 3000,
+                bottom: 1600,
+            },
         ];
         let names = vec!["DISPLAY1".into(), "DISPLAY2".into(), r"\\.\DISPLAY3".into()];
-        let zones = vec![zone("DISPLAY3", Position::Left, Position::Bottom, 50.0, 100.0)];
+        let zones = vec![zone(
+            "DISPLAY3",
+            Position::Left,
+            Position::Bottom,
+            50.0,
+            100.0,
+        )];
 
         // Upper half of the right display connects to the center Windows display.
-        assert_eq!(entered_monitor_zone((2005, 200), (1990, 200), &displays, &names, &zones), None);
+        assert_eq!(
+            entered_monitor_zone((2005, 200), (1990, 200), &displays, &names, &zones),
+            None
+        );
         // The lower half has no adjacent Windows display and activates Linux.
-        assert_eq!(entered_monitor_zone((2005, 1200), (1990, 1200), &displays, &names, &zones), Some(Position::Bottom));
+        assert_eq!(
+            entered_monitor_zone((2005, 1200), (1990, 1200), &displays, &names, &zones),
+            Some(Position::Bottom)
+        );
         // Unlisted monitor boundaries are never active.
-        assert_eq!(entered_monitor_zone((1400, 790), (1400, 810), &displays, &names, &zones), None);
-        assert_eq!(entered_monitor_zone((2005, 200), (1980, 200), &displays, &names, &zones), None);
+        assert_eq!(
+            entered_monitor_zone((1400, 790), (1400, 810), &displays, &names, &zones),
+            None
+        );
+        assert_eq!(
+            entered_monitor_zone((2005, 200), (1980, 200), &displays, &names, &zones),
+            None
+        );
     }
 
     #[test]
     fn pixel_limits_are_exclusive_at_the_end() {
-        let displays = [RECT { left: 0, top: 0, right: 1000, bottom: 800 }];
+        let displays = [RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 800,
+        }];
         let names = vec!["DISPLAY1".into()];
         let mut z = zone("DISPLAY1", Position::Bottom, Position::Bottom, 0.0, 100.0);
         z.start_px = Some(250);
         z.end_px = Some(750);
-        assert_eq!(entered_monitor_zone((250, 795), (250, 805), &displays, &names, &[z.clone()]), Some(Position::Bottom));
-        assert_eq!(entered_monitor_zone((750, 795), (750, 805), &displays, &names, &[z]), None);
+        assert_eq!(
+            entered_monitor_zone((250, 795), (250, 805), &displays, &names, &[z.clone()]),
+            Some(Position::Bottom)
+        );
+        assert_eq!(
+            entered_monitor_zone((750, 795), (750, 805), &displays, &names, &[z]),
+            None
+        );
     }
 
     #[test]
@@ -248,12 +317,23 @@ mod monitor_zone_tests {
 
     #[test]
     fn invalid_percentage_rejected_and_diagonal_path_respects_edge() {
-        let displays = [RECT { left: 0, top: 0, right: 1000, bottom: 800 }];
+        let displays = [RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 800,
+        }];
         let names = vec!["DISPLAY1".into()];
         let mut z = zone("DISPLAY1", Position::Right, Position::Right, 0.0, 100.0);
         z.end_percent = Some(f64::NAN);
-        assert_eq!(entered_monitor_zone((990, 500), (1010, 500), &displays, &names, &[z]), None);
+        assert_eq!(
+            entered_monitor_zone((990, 500), (1010, 500), &displays, &names, &[z]),
+            None
+        );
         let z = zone("DISPLAY1", Position::Right, Position::Right, 0.0, 50.0);
-        assert_eq!(entered_monitor_zone((990, 390), (1010, 420), &displays, &names, &[z]), None);
+        assert_eq!(
+            entered_monitor_zone((990, 390), (1010, 420), &displays, &names, &[z]),
+            None
+        );
     }
 }
