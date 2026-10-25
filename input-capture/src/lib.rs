@@ -13,6 +13,8 @@ use futures::StreamExt;
 use futures_core::Stream;
 use tokio::time::Sleep;
 
+use mousehop_ipc::WindowsCrossingZone;
+
 use input_event::{
     CrossingModifier, Event, KeyboardEvent, PointerEvent,
     display::{DisplayEdge, DisplayLayout},
@@ -440,6 +442,15 @@ impl InputCapture {
         modifier: Option<CrossingModifier>,
     ) -> Result<(), CaptureError> {
         self.capture.set_crossing_modifier(pos, modifier).await
+    }
+
+    /// Install per-display crossing rules in the Windows backend. Other
+    /// capture backends ignore the Windows-only configuration.
+    pub async fn set_windows_crossing_zones(
+        &mut self,
+        zones: Vec<WindowsCrossingZone>,
+    ) -> Result<(), CaptureError> {
+        self.capture.set_windows_crossing_zones(zones).await
     }
 
     /// release mouse
@@ -1265,6 +1276,15 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
         _pos: Position,
         _modifier: Option<CrossingModifier>,
     ) -> Result<(), CaptureError>;
+
+    /// Configure Windows-only monitor/edge crossing zones. Non-Windows
+    /// implementations have no such zones and keep their original behavior.
+    async fn set_windows_crossing_zones(
+        &mut self,
+        _zones: Vec<WindowsCrossingZone>,
+    ) -> Result<(), CaptureError> {
+        Ok(())
+    }
 
     /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;
