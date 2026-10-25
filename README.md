@@ -389,6 +389,57 @@ with the next graphical session.
 
 
 ## Configuration
+
+### Windows per-monitor crossing zones (experimental)
+
+On Windows, you can restrict outgoing mouse capture to selected segments of
+individual monitor edges, instead of treating every side of the entire
+multi-monitor desktop as an active crossing barrier. This is especially useful
+for a Windows desktop with multiple monitors and a second Linux computer.
+
+Add `[[windows_crossing_zones]]` entries to the **Windows host's** Mousehop
+`config.toml` (`%LOCALAPPDATA%\\mousehop\\config.toml` by default):
+
+```toml
+# Switch down into the Linux peer from the entire bottom of the center screen.
+[[windows_crossing_zones]]
+monitor = "DISPLAY2"
+edge = "bottom"
+target = "bottom"
+
+# On the taller right Windows monitor, the upper half's left edge stays
+# in Windows while the lower half's left edge switches to the Linux peer.
+[[windows_crossing_zones]]
+monitor = "DISPLAY3"
+edge = "left"
+target = "bottom"
+start_percent = 50.0
+end_percent = 100.0
+
+# You could instead use pixel offsets (start inclusive, end exclusive):
+# start_px = 900
+# end_px = 1800
+```
+
+The `monitor` value is a Windows GDI name such as `DISPLAY1` or
+`DISPLAY2` (a full `\\\\.\\DISPLAY2` device name is also accepted). It may not
+match the numbers drawn in Windows Display Settings; verify the device mapping.
+The `edge` field selects the physical Windows monitor edge, while `target`
+selects the logical Mousehop peer position (`left`, `right`, `top`, or
+`bottom`). These can differ for irregular layouts. Percentages are relative
+to the individual monitor's width (top/bottom) or height (left/right), and
+pixel offsets override their corresponding percentage fields.
+
+When one or more zones are configured, **only listed zones** initiate an
+outgoing crossing. Cursor movement between adjacent Windows monitors continues
+normally and is not captured. Removing all zones preserves Mousehop's original
+whole-desktop edge behavior. Other operating systems ignore these Windows-only
+rules, and existing peer/clipboard settings remain unchanged.
+
+**Note:** Monitor configurations and release behavior should be tested on your
+physical display arrangement; this feature does not modify Windows' own
+virtual desktop arrangement.
+
 To automatically load clients on startup, the file `$XDG_CONFIG_HOME/mousehop/config.toml` is parsed.
 `$XDG_CONFIG_HOME` defaults to `~/.config/`.
 
