@@ -46,7 +46,7 @@ impl Capture for WindowsInputCapture {
         Ok(())
     }
 
-    async fn set_windows_crossing_zones(
+    fn set_windows_crossing_zones(
         &mut self,
         zones: Vec<WindowsCrossingZone>,
     ) -> Result<(), CaptureError> {
