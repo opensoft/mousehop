@@ -1012,8 +1012,7 @@ impl CaptureTask {
         // cross-platform — every backend benefits.
         capture.set_release_threshold(*self.release_threshold_px.borrow());
         capture
-            .set_windows_crossing_zones(self.windows_crossing_zones.clone())
-            .await?;
+            .set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
 
         let r = self.do_capture_session(&mut capture).await;
 
@@ -1469,8 +1468,7 @@ impl CaptureTask {
                         // Do not tear down an active remote session. Newly
                         // configured zones apply to subsequent crossings.
                         capture
-                            .set_windows_crossing_zones(self.windows_crossing_zones.clone())
-                            .await?;
+                            .set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,
