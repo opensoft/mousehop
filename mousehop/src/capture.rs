@@ -12,7 +12,7 @@ use input_capture::{
 };
 use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 use local_channel::mpsc::{Receiver, Sender, channel};
-use mousehop_ipc::CrossingModifier;
+use mousehop_ipc::{CrossingModifier, WindowsCrossingZone};
 use mousehop_proto::{
     CAP_ATOMIC_HANDOVER, CAP_TRANSACTIONAL_HANDOVER, HandoverWarpStatus,
     HostInputState as ProtoHostInputState, LEAVE_HANDOVER, LEAVE_RELEASE_ONLY, ProtoEvent,
@@ -104,6 +104,7 @@ enum CaptureRequest {
     SetCommandAsCtrl(CaptureHandle, bool),
     /// Update the optional modifier gate for a client's next crossing.
     SetCrossingModifier(CaptureHandle, Option<CrossingModifier>),
+    SetWindowsCrossingZones(Vec<WindowsCrossingZone>),
 }
 
 impl Capture {
@@ -112,6 +113,7 @@ impl Capture {
         conn: MousehopConnection,
         release_bind: Vec<scancode::Linux>,
         release_threshold_px: u32,
+        windows_crossing_zones: Vec<WindowsCrossingZone>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -130,6 +132,7 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             release_threshold_px: Rc::new(RefCell::new(release_threshold_px)),
+            windows_crossing_zones,
             state: Default::default(),
             command_ctrl_mapper: Default::default(),
             pending_input: Default::default(),
@@ -227,6 +230,12 @@ impl Capture {
         let _ = self
             .request_tx
             .send(CaptureRequest::SetCrossingModifier(handle, modifier));
+    }
+
+    pub(crate) fn set_windows_crossing_zones(&self, zones: Vec<WindowsCrossingZone>) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetWindowsCrossingZones(zones));
     }
 }
 
@@ -588,6 +597,7 @@ struct CaptureTask {
     lock_recovery_client: Option<CaptureHandle>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     release_threshold_px: Rc<RefCell<u32>>,
+    windows_crossing_zones: Vec<WindowsCrossingZone>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
     command_ctrl_mapper: CommandCtrlMapper,
@@ -969,6 +979,9 @@ impl CaptureTask {
                         CaptureRequest::SetCrossingModifier(handle, modifier) => {
                             self.set_crossing_modifier(handle, modifier);
                         }
+                        CaptureRequest::SetWindowsCrossingZones(zones) => {
+                            self.windows_crossing_zones = zones;
+                        }
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -1000,6 +1013,7 @@ impl CaptureTask {
         // created InputCapture. The wall-press detection is
         // cross-platform — every backend benefits.
         capture.set_release_threshold(*self.release_threshold_px.borrow());
+        capture.set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
 
         let r = self.do_capture_session(&mut capture).await;
 
@@ -1449,6 +1463,13 @@ impl CaptureTask {
                                 .set_crossing_modifier(pos, self.crossing_modifier_at(pos))
                                 .await?;
                         }
+                    }
+                    CaptureRequest::SetWindowsCrossingZones(zones) => {
+                        self.windows_crossing_zones = zones;
+                        // Do not tear down an active remote session. Newly
+                        // configured zones apply to subsequent crossings.
+                        capture
+                            .set_windows_crossing_zones(self.windows_crossing_zones.clone())?;
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,
@@ -2180,6 +2201,7 @@ mod command_ctrl_tests {
             lock_recovery_client: None,
             release_bind: Default::default(),
             release_threshold_px: Default::default(),
+            windows_crossing_zones: Vec::new(),
             request_rx,
             state: State::WaitingForAck,
             command_ctrl_mapper: Default::default(),

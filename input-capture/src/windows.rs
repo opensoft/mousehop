@@ -8,6 +8,7 @@ use std::task::ready;
 use tokio::sync::mpsc::{Receiver, channel};
 
 use input_event::CrossingModifier;
+use mousehop_ipc::WindowsCrossingZone;
 
 use super::{Capture, CaptureError, CaptureEvent, Position};
 
@@ -42,6 +43,14 @@ impl Capture for WindowsInputCapture {
         modifier: Option<CrossingModifier>,
     ) -> Result<(), CaptureError> {
         self.event_thread.set_crossing_modifier(pos, modifier);
+        Ok(())
+    }
+
+    fn set_windows_crossing_zones(
+        &mut self,
+        zones: Vec<WindowsCrossingZone>,
+    ) -> Result<(), CaptureError> {
+        self.event_thread.set_windows_crossing_zones(zones);
         Ok(())
     }
 
