@@ -132,7 +132,8 @@ pub(crate) fn entered_monitor_zone(
         // Calculate intersection with the physical edge, rather than using
         // the destination point: diagonal motion must not select a zone on
         // another part of the monitor.
-        let (from, to, boundary, origin, length) = match zone.edge {
+        let edge = capture_position(zone.edge);
+        let (from, to, boundary, origin, length) = match edge {
             Position::Left if curr.0 < display.left => (
                 prev.0,
                 curr.0,
@@ -170,17 +171,59 @@ pub(crate) fn entered_monitor_zone(
         if !(0.0..=1.0).contains(&t) {
             return None;
         }
-        let along = match zone.edge {
+        let along = match edge {
             Position::Left | Position::Right => f64::from(prev.1) + t * f64::from(curr.1 - prev.1),
             Position::Top | Position::Bottom => f64::from(prev.0) + t * f64::from(curr.0 - prev.0),
         } - f64::from(origin);
         if along < 0.0 || along >= f64::from(length) {
             return None;
         }
+        // A diagonal sample may pass through a neighboring monitor before
+        // ending outside the layout. Only an exposed part of this edge can
+        // initiate capture, even when the final point is outside every display.
+        let coordinate = along + f64::from(origin);
+        let covered = displays.iter().any(|other| match edge {
+            Position::Left => {
+                other.left < boundary
+                    && other.right >= boundary
+                    && coordinate >= f64::from(other.top)
+                    && coordinate < f64::from(other.bottom)
+            }
+            Position::Right => {
+                other.left <= boundary
+                    && other.right > boundary
+                    && coordinate >= f64::from(other.top)
+                    && coordinate < f64::from(other.bottom)
+            }
+            Position::Top => {
+                other.top < boundary
+                    && other.bottom >= boundary
+                    && coordinate >= f64::from(other.left)
+                    && coordinate < f64::from(other.right)
+            }
+            Position::Bottom => {
+                other.top <= boundary
+                    && other.bottom > boundary
+                    && coordinate >= f64::from(other.left)
+                    && coordinate < f64::from(other.right)
+            }
+        });
+        if covered {
+            return None;
+        }
         let start = range_offset(zone.start_px, zone.start_percent, 0.0, length)?;
         let end = range_offset(zone.end_px, zone.end_percent, 100.0, length)?;
-        (start < end && along >= start && along < end).then_some(zone.target)
+        (start < end && along >= start && along < end).then_some(capture_position(zone.target))
     })
+}
+
+fn capture_position(position: mousehop_ipc::Position) -> Position {
+    match position {
+        mousehop_ipc::Position::Left => Position::Left,
+        mousehop_ipc::Position::Right => Position::Right,
+        mousehop_ipc::Position::Top => Position::Top,
+        mousehop_ipc::Position::Bottom => Position::Bottom,
+    }
 }
 
 fn range_offset(
@@ -207,10 +250,16 @@ mod monitor_zone_tests {
         start: f64,
         end: f64,
     ) -> WindowsCrossingZone {
+        let ipc_position = |position| match position {
+            Position::Left => mousehop_ipc::Position::Left,
+            Position::Right => mousehop_ipc::Position::Right,
+            Position::Top => mousehop_ipc::Position::Top,
+            Position::Bottom => mousehop_ipc::Position::Bottom,
+        };
         WindowsCrossingZone {
             monitor: monitor.to_owned(),
-            edge,
-            target,
+            edge: ipc_position(edge),
+            target: ipc_position(target),
             start_px: None,
             end_px: None,
             start_percent: Some(start),
@@ -271,6 +320,44 @@ mod monitor_zone_tests {
     }
 
     #[test]
+    fn diagonal_exit_through_an_adjacent_monitor_does_not_capture() {
+        let displays = [
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1000,
+                bottom: 800,
+            },
+            RECT {
+                left: 1000,
+                top: 0,
+                right: 2000,
+                bottom: 1600,
+            },
+        ];
+        let names = vec!["DISPLAY1".into(), "DISPLAY2".into()];
+        let zones = [zone(
+            "DISPLAY2",
+            Position::Left,
+            Position::Bottom,
+            0.0,
+            100.0,
+        )];
+
+        // The left-edge intersection is above y=800, so this movement
+        // enters DISPLAY1 before leaving through its unconfigured bottom.
+        assert_eq!(
+            entered_monitor_zone((1005, 790), (990, 810), &displays, &names, &zones),
+            None
+        );
+        // The same edge is exposed below DISPLAY1 and must remain active.
+        assert_eq!(
+            entered_monitor_zone((1005, 810), (990, 830), &displays, &names, &zones),
+            Some(Position::Bottom)
+        );
+    }
+
+    #[test]
     fn pixel_limits_are_exclusive_at_the_end() {
         let displays = [RECT {
             left: 0,
@@ -283,7 +370,13 @@ mod monitor_zone_tests {
         z.start_px = Some(250);
         z.end_px = Some(750);
         assert_eq!(
-            entered_monitor_zone((250, 795), (250, 805), &displays, &names, &[z.clone()]),
+            entered_monitor_zone(
+                (250, 795),
+                (250, 805),
+                &displays,
+                &names,
+                std::slice::from_ref(&z),
+            ),
             Some(Position::Bottom)
         );
         assert_eq!(

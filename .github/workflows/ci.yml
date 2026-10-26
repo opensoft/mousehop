@@ -89,6 +89,10 @@ jobs:
           echo "C:\gtk-build\gtk\x64\release\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Windows - build gtk on cache miss
         if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        env:
+          # GTK's cargo-c dependency needs a newer compiler than Mousehop's
+          # pinned toolchain. Limit this override to the dependency build.
+          RUSTUP_TOOLCHAIN: stable
         run: |
           py -m venv .venv
           .venv\Scripts\activate.ps1
