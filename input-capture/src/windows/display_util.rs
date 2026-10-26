@@ -105,6 +105,62 @@ pub(crate) fn clamp_to_display_bounds(
 ///
 /// The crossing must *leave* the Windows layout. Traversing directly between
 /// overlapping display regions keeps control in Windows.
+pub(crate) fn entered_crossing(
+    prev: (i32, i32),
+    curr: (i32, i32),
+    displays: &[RECT],
+    names: &[String],
+    zones: &[WindowsCrossingZone],
+) -> Option<Position> {
+    if zones.is_empty() {
+        entered_barrier(prev, curr, displays)
+    } else {
+        entered_monitor_zone(prev, curr, displays, names, zones)
+    }
+}
+
+fn monitor_index(monitor: &str, names: &[String]) -> Option<usize> {
+    let name = monitor.rsplit('\\').next().unwrap_or(monitor);
+    names.iter().position(|n| {
+        n.rsplit('\\')
+            .next()
+            .unwrap_or(n)
+            .eq_ignore_ascii_case(name)
+    })
+}
+
+/// Report unusable zones when configuration or monitor topology changes,
+/// never for individual mouse movements. Invalid zones remain fail-closed.
+pub(crate) fn crossing_zone_diagnostics(
+    displays: &[RECT],
+    names: &[String],
+    zones: &[WindowsCrossingZone],
+) -> Vec<String> {
+    zones
+        .iter()
+        .filter_map(|zone| {
+            let Some(display) = monitor_index(&zone.monitor, names).and_then(|i| displays.get(i))
+            else {
+                return Some(format!(
+                    "crossing zone {:?}: no matching monitor; available GDI names: {names:?}",
+                    zone.monitor
+                ));
+            };
+            let length = match capture_position(zone.edge) {
+                Position::Left | Position::Right => display.bottom - display.top,
+                Position::Top | Position::Bottom => display.right - display.left,
+            };
+            resolved_range(zone, length).is_none().then(|| {
+                format!(
+                    "crossing zone {:?} ({:?}): invalid range for {length}-pixel edge; \
+                     use 0 <= start < end <= {length} or finite percentages from 0 to 100",
+                    zone.monitor, zone.edge
+                )
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn entered_monitor_zone(
     prev: (i32, i32),
     curr: (i32, i32),
@@ -117,13 +173,7 @@ pub(crate) fn entered_monitor_zone(
     }
 
     zones.iter().find_map(|zone| {
-        let name = zone.monitor.rsplit('\\').next().unwrap_or(&zone.monitor);
-        let index = names.iter().position(|n| {
-            n.rsplit('\\')
-                .next()
-                .unwrap_or(n)
-                .eq_ignore_ascii_case(name)
-        })?;
+        let index = monitor_index(&zone.monitor, names)?;
         let display = displays.get(index)?;
         if !is_within_dp_region(prev, display) {
             return None;
@@ -175,7 +225,7 @@ pub(crate) fn entered_monitor_zone(
             Position::Left | Position::Right => f64::from(prev.1) + t * f64::from(curr.1 - prev.1),
             Position::Top | Position::Bottom => f64::from(prev.0) + t * f64::from(curr.0 - prev.0),
         } - f64::from(origin);
-        if along < 0.0 || along >= f64::from(length) {
+        if along < 0.0 || along > f64::from(length) {
             return None;
         }
         // A diagonal sample may pass through a neighboring monitor before
@@ -211,9 +261,15 @@ pub(crate) fn entered_monitor_zone(
         if covered {
             return None;
         }
-        let start = range_offset(zone.start_px, zone.start_percent, 0.0, length)?;
-        let end = range_offset(zone.end_px, zone.end_percent, 100.0, length)?;
-        (start < end && along >= start && along < end).then_some(capture_position(zone.target))
+        let (start, end) = resolved_range(zone, length)?;
+        // An exact corner exit belongs to the final pixel of the edge.
+        // Preserve half-open user ranges after resolving that geometric point.
+        let along = if along == f64::from(length) {
+            f64::from(length - 1)
+        } else {
+            along
+        };
+        (along >= start && along < end).then_some(capture_position(zone.target))
     })
 }
 
@@ -233,15 +289,33 @@ fn range_offset(
     length: i32,
 ) -> Option<f64> {
     if let Some(px) = pixels {
-        return Some(f64::from(px));
+        return (f64::from(px) <= f64::from(length)).then_some(f64::from(px));
     }
     let p = percent.unwrap_or(default);
     (p.is_finite() && (0.0..=100.0).contains(&p)).then_some(f64::from(length) * p / 100.0)
 }
 
+fn resolved_range(zone: &WindowsCrossingZone, length: i32) -> Option<(f64, f64)> {
+    if length <= 0 {
+        return None;
+    }
+    let start = range_offset(zone.start_px, zone.start_percent, 0.0, length)?;
+    let end = range_offset(zone.end_px, zone.end_percent, 100.0, length)?;
+    (start < end).then_some((start, end))
+}
+
 #[cfg(test)]
 mod monitor_zone_tests {
     use super::*;
+
+    fn display() -> RECT {
+        RECT {
+            left: 0,
+            top: 0,
+            right: 1000,
+            bottom: 800,
+        }
+    }
 
     fn zone(
         monitor: &str,
@@ -426,6 +500,222 @@ mod monitor_zone_tests {
         let z = zone("DISPLAY1", Position::Right, Position::Right, 0.0, 50.0);
         assert_eq!(
             entered_monitor_zone((990, 390), (1010, 420), &displays, &names, &[z]),
+            None
+        );
+    }
+
+    #[test]
+    fn exposed_edge_respects_the_percentage_lower_bound() {
+        let displays = [RECT {
+            bottom: 1600,
+            ..display()
+        }];
+        let names = vec!["DISPLAY1".into()];
+        let zones = [zone(
+            "DISPLAY1",
+            Position::Left,
+            Position::Bottom,
+            50.0,
+            100.0,
+        )];
+        assert_eq!(
+            entered_monitor_zone((5, 400), (-10, 400), &displays, &names, &zones),
+            None
+        );
+        for y in [800, 1200] {
+            assert_eq!(
+                entered_monitor_zone((5, y), (-10, y), &displays, &names, &zones),
+                Some(Position::Bottom)
+            );
+        }
+    }
+
+    #[test]
+    fn omitted_ranges_cover_the_whole_edge_and_full_names_match() {
+        let displays = [display()];
+        let names = vec![r"\\.\DISPLAY1".into()];
+        let mut z = zone(
+            r"\\.\display1",
+            Position::Bottom,
+            Position::Bottom,
+            0.0,
+            100.0,
+        );
+        z.start_percent = None;
+        z.end_percent = None;
+        for x in [10, 989] {
+            assert_eq!(
+                entered_monitor_zone(
+                    (x, 795),
+                    (x, 805),
+                    &displays,
+                    &names,
+                    std::slice::from_ref(&z)
+                ),
+                Some(Position::Bottom)
+            );
+        }
+    }
+
+    #[test]
+    fn all_four_physical_edges_can_activate_their_targets() {
+        let displays = [display()];
+        let names = vec!["DISPLAY1".into()];
+        for (edge, prev, curr) in [
+            (Position::Left, (5, 400), (-10, 400)),
+            (Position::Right, (995, 400), (1010, 400)),
+            (Position::Top, (500, 5), (500, -10)),
+            (Position::Bottom, (500, 795), (500, 810)),
+        ] {
+            let zones = [zone("DISPLAY1", edge, edge, 0.0, 100.0)];
+            assert_eq!(
+                entered_monitor_zone(prev, curr, &displays, &names, &zones),
+                Some(edge)
+            );
+        }
+    }
+
+    #[test]
+    fn exact_corner_exits_use_the_last_pixel_without_relaxing_range_ends() {
+        let displays = [display()];
+        let names = vec!["DISPLAY1".into()];
+        let mut z = zone("DISPLAY1", Position::Right, Position::Right, 0.0, 100.0);
+        assert_eq!(
+            entered_monitor_zone(
+                (995, 795),
+                (1005, 805),
+                &displays,
+                &names,
+                std::slice::from_ref(&z)
+            ),
+            Some(Position::Right)
+        );
+        z.end_px = Some(799);
+        assert_eq!(
+            entered_monitor_zone((995, 795), (1005, 805), &displays, &names, &[z]),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_ranges_are_rejected_and_diagnosed() {
+        let displays = [display()];
+        let names = vec!["DISPLAY1".into()];
+        for end in [-1.0, 101.0, 150.0, f64::NAN, f64::INFINITY] {
+            let z = zone("DISPLAY1", Position::Bottom, Position::Bottom, 0.0, end);
+            assert_eq!(
+                entered_monitor_zone(
+                    (500, 795),
+                    (500, 805),
+                    &displays,
+                    &names,
+                    std::slice::from_ref(&z)
+                ),
+                None
+            );
+            assert_eq!(crossing_zone_diagnostics(&displays, &names, &[z]).len(), 1);
+        }
+        for (start, end) in [(1200, 1600), (750, 250), (0, 1001)] {
+            let mut z = zone("DISPLAY1", Position::Bottom, Position::Bottom, 0.0, 100.0);
+            z.start_px = Some(start);
+            z.end_px = Some(end);
+            assert_eq!(
+                entered_monitor_zone(
+                    (500, 795),
+                    (500, 805),
+                    &displays,
+                    &names,
+                    std::slice::from_ref(&z)
+                ),
+                None
+            );
+            assert_eq!(crossing_zone_diagnostics(&displays, &names, &[z]).len(), 1);
+        }
+        let z = zone("DISPLAY9", Position::Bottom, Position::Bottom, 0.0, 100.0);
+        let diagnostics = crossing_zone_diagnostics(&displays, &names, &[z]);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("DISPLAY9"));
+        assert!(diagnostics[0].contains("DISPLAY1"));
+    }
+
+    #[test]
+    fn a_zone_requires_the_source_monitor_and_an_outside_destination() {
+        let names = vec!["DISPLAY1".into(), "DISPLAY2".into()];
+        let zones = [zone(
+            "DISPLAY1",
+            Position::Bottom,
+            Position::Bottom,
+            0.0,
+            100.0,
+        )];
+        let displays = [
+            display(),
+            RECT {
+                left: 1000,
+                right: 2000,
+                bottom: 1600,
+                ..display()
+            },
+        ];
+        assert_eq!(
+            entered_monitor_zone((1500, 500), (500, 1000), &displays, &names, &zones),
+            None
+        );
+
+        // A sample can jump across a gap into another Windows monitor.
+        let displays = [
+            display(),
+            RECT {
+                left: 1100,
+                right: 2100,
+                ..display()
+            },
+        ];
+        let zones = [zone(
+            "DISPLAY1",
+            Position::Right,
+            Position::Right,
+            0.0,
+            100.0,
+        )];
+        assert_eq!(
+            entered_monitor_zone((995, 400), (1110, 400), &displays, &names, &zones),
+            None
+        );
+    }
+
+    #[test]
+    fn only_an_empty_allowlist_uses_legacy_crossing() {
+        let displays = [display()];
+        let names = vec!["DISPLAY1".into()];
+        assert_eq!(
+            entered_crossing((995, 400), (1010, 400), &displays, &names, &[]),
+            Some(Position::Right)
+        );
+        let zones = [zone(
+            "DISPLAY1",
+            Position::Bottom,
+            Position::Bottom,
+            0.0,
+            100.0,
+        )];
+        assert_eq!(
+            entered_crossing((995, 400), (1010, 400), &displays, &names, &zones),
+            None
+        );
+        assert_eq!(
+            entered_crossing((500, 795), (500, 805), &displays, &names, &zones),
+            Some(Position::Bottom)
+        );
+        let zones = [zone(
+            "DISPLAY9",
+            Position::Right,
+            Position::Right,
+            0.0,
+            100.0,
+        )];
+        assert_eq!(
+            entered_crossing((995, 400), (1010, 400), &displays, &names, &zones),
             None
         );
     }

@@ -419,6 +419,7 @@ impl Default for ClientConfig {
 /// A configured list replaces unrestricted global-edge activation. Empty means
 /// the historical behavior. Names use Win32 GDI identifiers such as DISPLAY2.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WindowsCrossingZone {
     pub monitor: String,
     pub edge: Position,

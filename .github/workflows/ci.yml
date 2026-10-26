@@ -79,8 +79,7 @@ jobs:
         id: cache
         with:
           path: c:/gtk-build/gtk/x64/release/**
-          key: gtk-windows-build
-          restore-keys: gtk-windows-build
+          key: gtk-windows-${{ env.CACHE_IMAGE }}-rust-1.97.1-gvsbuild-6e6707189032
       - name: Windows - update PATH
         if: runner.os == 'Windows'
         run: |
@@ -90,9 +89,9 @@ jobs:
       - name: Windows - build gtk on cache miss
         if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
         env:
-          # GTK's cargo-c dependency needs a newer compiler than Mousehop's
-          # pinned toolchain. Limit this override to the dependency build.
-          RUSTUP_TOOLCHAIN: stable
+          # This pinned gvsbuild revision installs 1.97.1 in its private
+          # rustup home. cargo-c needs >=1.97; Mousehop itself stays on 1.95.
+          RUSTUP_TOOLCHAIN: 1.97.1
         run: |
           py -m venv .venv
           .venv\Scripts\activate.ps1

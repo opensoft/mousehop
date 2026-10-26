@@ -63,6 +63,7 @@ fn default_path() -> Result<PathBuf, VarError> {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct ConfigToml {
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
@@ -742,7 +743,10 @@ impl Config {
                     .is_none_or(|c| c != &current_config);
                 self.config_toml.replace(current_config);
             }
-            Err(e) => log::warn!("{:?} {e}", self.config_path()),
+            Err(e) => log::warn!(
+                "could not reload {:?}: {e}; keeping the previous configuration",
+                self.config_path()
+            ),
         };
         Ok(changed)
     }
@@ -837,6 +841,71 @@ mod connection_mode_tests {
             watcher,
             watch_rx,
         }
+    }
+
+    #[test]
+    fn documented_windows_crossing_zones_parse_and_roundtrip() {
+        let readme = include_str!("../../README.md");
+        let section = readme
+            .split_once("### Windows per-monitor crossing zones (experimental)")
+            .expect("Windows configuration section")
+            .1;
+        let example = section.split_once("```toml").expect("TOML example").1;
+        let example = example.split_once("```").expect("end of example").0;
+        let parsed: ConfigToml = toml::from_str(example).expect("parse README example");
+        let zones = parsed.windows_crossing_zones.as_ref().expect("zones");
+        assert_eq!(zones.len(), 2);
+        assert_eq!(zones[0].monitor, "DISPLAY2");
+        assert_eq!(zones[0].edge, Position::Bottom);
+        assert_eq!(zones[0].target, Position::Bottom);
+        assert_eq!(zones[0].start_px, None);
+        assert_eq!(zones[0].end_px, None);
+        assert_eq!(zones[0].start_percent, None);
+        assert_eq!(zones[0].end_percent, None);
+        assert_eq!(zones[1].edge, Position::Left);
+        assert_eq!(zones[1].target, Position::Bottom);
+        assert_eq!(zones[1].start_percent, Some(50.0));
+        assert_eq!(zones[1].end_percent, Some(100.0));
+
+        let serialized = toml_edit::ser::to_string_pretty(&parsed).expect("serialize zones");
+        let reloaded: ConfigToml = toml::from_str(&serialized).expect("reload zones");
+        assert_eq!(reloaded, parsed);
+        let mut config = config_with_no_clients();
+        config.config_toml = Some(reloaded);
+        assert_eq!(config.windows_crossing_zones(), *zones);
+    }
+
+    #[test]
+    fn legacy_config_has_no_crossing_zones() {
+        let mut config = config_with_no_clients();
+        config.config_toml = Some(toml::from_str("port = 4252").expect("legacy config"));
+        assert!(config.windows_crossing_zones().is_empty());
+    }
+
+    #[test]
+    fn crossing_zone_required_fields_and_typos_are_rejected() {
+        let example = "[[windows_crossing_zones]]\nmonitor = 'DISPLAY1'\nedge = 'bottom'\ntarget = 'bottom'\n";
+        for field in [
+            "monitor = 'DISPLAY1'\n",
+            "edge = 'bottom'\n",
+            "target = 'bottom'\n",
+        ] {
+            assert!(toml::from_str::<ConfigToml>(&example.replace(field, "")).is_err());
+        }
+        assert!(
+            toml::from_str::<ConfigToml>(
+                &example.replace("windows_crossing_zones", "window_crossing_zones")
+            )
+            .is_err()
+        );
+        assert!(toml::from_str::<ConfigToml>(&format!("{example}start_precent = 50.0\n")).is_err());
+
+        let full_name = example.replace("'DISPLAY1'", r"'\\.\DISPLAY1'");
+        let parsed: ConfigToml = toml::from_str(&full_name).expect("literal GDI name");
+        assert_eq!(
+            parsed.windows_crossing_zones.expect("zones")[0].monitor,
+            r"\\.\DISPLAY1"
+        );
     }
 
     #[test]
